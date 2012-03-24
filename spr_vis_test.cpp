@@ -13,7 +13,8 @@
 using ivy_mike::tree_parser_ms::lnode;
 using ivy_mike::tree_parser_ms::parser;
 using ivy_mike::tree_parser_ms::ln_pool;
-
+using ivy_mike::tree_parser_ms::prune_with_rollback;
+using ivy_mike::tree_parser_ms::splice_with_rollback;
 
 boost::dynamic_bitset<> tip_list_to_split( const std::vector<std::string> &split, const std::vector<std::string> &sorted_names ) {
  
@@ -270,6 +271,230 @@ int main( int argc, char *argv[] ) {
     
     trace_reader tr( trace_name, &pool );
     
+    
+    trace_element::trace_type next_type;
+    while( true ) { 
+            
+        next_type = tr.next();
+        
+        if( next_type == trace_element::none ) {
+            throw std::runtime_error( "end of trace while looking for first tree\n" );
+        } else if( next_type == trace_element::tree ) {
+            break;
+        }
+    }
+    size_t tree_count = 0;
+    bool do_exit = false;
+    
+    // in the following code there are three levels of nested loops
+    // level 1: trees, level2: subtrees, level3: insertion positions
+    while( next_type == trace_element::tree ) {
+        
+        
+        // read current tree
+        lnode *tree = 0;
+        
+        
+                
+        trace_tree t = tr.get_tree();
+        
+        
+        ++tree_count;
+        
+        std::cout << tree_count << " tree\n";
+        
+        
+        
+        pool.clear();
+        pool.mark(t.get_tree());
+        pool.sweep();
+        
+
+        tree = t.get_tree();
+        
+        
+        
+//         {
+//             std::ofstream os ( "cur_tree" );
+//             ivy_mike::tree_parser_ms::print_newick( tree, os );
+//         }
+     
+        assert( tree != 0 );
+        //getchar();
+        
+        std::vector<lnode *> sorted_tips;
+        
+        typedef std::tr1::unordered_map<boost::dynamic_bitset<>, lnode*, ivy_mike::bitset_hash > split_to_node_map;
+        split_to_node_map split_to_node;
+        
+        {
+            std::vector<lnode* > nodes;
+            std::vector<boost::dynamic_bitset<> > splits;
+            
+            
+            // get the lists of splits and correponding edges and put them into split_to_edge map
+            ivy_mike::get_all_splits_by_node( tree, nodes, splits, sorted_tips );
+            
+            std::cout << "size: " << nodes.size() << "\n";
+            
+            for( size_t i = 0; i < splits.size(); ++i ) {
+                split_to_node.insert( std::make_pair( splits.at(i), nodes.at(i) ) ); // TODO: change this to emplace and move semantics
+            }
+        }
+        std::vector<std::string> sorted_names;
+        for( auto it = sorted_tips.begin(); it != sorted_tips.end(); ++it ) {
+            sorted_names.push_back((*it)->m_data->tipName);
+        }
+        
+        
+        // consume next subtree specifier, if there is one
+        
+        next_type = tr.next();
+        
+        if( next_type == trace_element::insertion ) {
+            throw std::runtime_error( "unexcpected trace element while looking for subtree: insertion" );
+        }
+        
+        size_t subtree_count = 0;
+    
+        
+        // level 2: subtrees
+        while( next_type == trace_element::subtree ) { 
+            trace_subtree st = tr.get_subtree();
+            
+            ++subtree_count;
+            
+            std::cout << tree_count << "." << subtree_count << " subtree: " << st.get_tip_list().size() << "\n";
+            
+            boost::dynamic_bitset<> split = tip_list_to_split( st.get_tip_list(), sorted_names );
+            
+            //split.flip();
+            
+            split_to_node_map::iterator it = split_to_node.find( split );
+            
+            //             if( it == split_to_edge.end() ) {
+                //                 split.flip();
+            //                 it = split_to_edge.find( split );
+            //             }
+            
+            assert( it != split_to_node.end() );
+            
+            std::cout << "split " << split.count() << " " << it->first.count() << "\n";
+            std::cout << "node: " << *(it->second->m_data) << "\n";
+            
+            lnode *prune_node = it->second->back;
+            
+            
+            // this will remove 'prune_node' from the rest of the tree.
+            // REMARK: using the 'transactional' property of prune_with_rollback. When prune goes out of scope
+            // at the end of this block, the prune will rollback automatically. 
+            prune_with_rollback prune(prune_node);
+            
+            assert( prune_node->next->back == 0 && prune_node->next->next->back == 0 ); // prune postcondition
+            {
+                // write the tree after the current subtree has been pruned
+                
+                std::stringstream ss;
+                ss << "trees/x." << tree_count << "." << subtree_count;
+                
+                std::ofstream os( ss.str().c_str() );
+                
+                lnode *root = ivy_mike::tree_parser_ms::next_non_tip(prune.get_save_node());
+                assert( root != 0 );
+                ivy_mike::tree_parser_ms::print_newick( root, os );
+            }
+            {
+                // write the pruned subtree (as rooted newick)
+                
+                std::stringstream ss;
+                ss << "trees/y." << tree_count << "." << subtree_count;
+                
+                std::ofstream os( ss.str().c_str() );
+                
+                lnode *root = ivy_mike::tree_parser_ms::next_non_tip(prune.get_save_node());
+                assert( root != 0 );
+                ivy_mike::tree_parser_ms::print_newick( prune_node->back, os, false );
+            }
+            
+            //assert( prune_node->back == 0 );
+            
+            
+            // consume next insertion positions if there is at least one
+            next_type = tr.next();
+            
+            size_t insertion_count = 0;
+            
+            // level 3: insertions
+            while( next_type == trace_element::insertion ) {
+                
+                
+                trace_insertion pos = tr.get_insertion();
+                
+                ++insertion_count;
+                
+                boost::dynamic_bitset<> split = tip_list_to_split( pos.get_split(), sorted_names );
+                
+                //             split.flip();
+                
+                split_to_node_map::iterator it = split_to_node.find( split );
+                
+                //             if( it == split_to_edge.end() ) {
+                    //                 split.flip();
+                //                 it = split_to_edge.find( split );
+                //             }
+                
+                if( it == split_to_node.end() ) {
+                    {
+                        std::ofstream os ( "error_tree" );
+                        ivy_mike::tree_parser_ms::print_newick( tree, os );
+                    }
+                    tr.dump_position();
+                    throw std::runtime_error( "split not found" );
+                }
+                
+                std::cout << tree_count << "." << subtree_count << "." << insertion_count << " insertion:  " << *(it->second->m_data) << " " << pos.get_score() << "\n";
+                
+                lnode *insertion_edge = it->second;
+                
+                // splice the pruned node into the new insertion position.
+                // REMARK: using the 'transactional' property of splice_with_rollback. When splice goes out of scope
+                // at the end of this block, the splicing will rollback automatically. 
+                
+                assert( prune_node->next->back == 0 && prune_node->next->next->back == 0 ); // check splice precondition (which is also the 'post splice-rollback' postcondition...)
+                splice_with_rollback splice(insertion_edge, prune_node );
+                
+                // write the reconstructed tree
+                {
+                    std::stringstream ss;
+                    ss << "trees/" << tree_count << "." << subtree_count << "." << insertion_count;
+                    
+                    std::ofstream os( ss.str().c_str() );
+                    
+                    lnode *root = ivy_mike::tree_parser_ms::next_non_tip(insertion_edge);
+                    assert( root != 0 );
+                    ivy_mike::tree_parser_ms::print_newick( root, os );
+                } // splice rollback happens here
+                
+                
+                next_type = tr.next();
+            } // prune rollback happens here
+        }
+    }
+    
+    return 0;
+}
+
+
+#if 0
+
+int main3( int argc, char *argv[] ) {
+    assert( argc == 2 );
+ 
+    const char *trace_name = argv[1];
+    ln_pool pool;
+    
+    trace_reader tr( trace_name, &pool );
+    
     while( true ) { 
             
         trace_element::trace_type t = tr.next();
@@ -428,3 +653,4 @@ int main2( int argc, char *argv[] ) {
     
     return 0;
 }
+#endif

@@ -22,3 +22,6 @@ ENDIF()
 
 add_executable( spr_vis_test spr_vis_test.cpp )
 target_link_libraries( spr_vis_test ${SYSDEP_LIBS} ivymike )
+
+add_executable( fixed_decimal fixed_decimal.cpp )
+target_link_libraries( fixed_decimal ${SYSDEP_LIBS} ivymike )
