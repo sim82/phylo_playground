@@ -20,8 +20,8 @@ boost::dynamic_bitset<> tip_list_to_split( const std::vector<std::string> &split
  
     boost::dynamic_bitset<> bitset(sorted_names.size());
     
-    for( auto it = split.begin(); it != split.end(); ++it ) {
-        auto sit = std::lower_bound(sorted_names.begin(), sorted_names.end(), *it );
+    for( std::vector< std::string >::const_iterator it = split.begin(); it != split.end(); ++it ) {
+        std::vector< std::string >::const_iterator sit = std::lower_bound(sorted_names.begin(), sorted_names.end(), *it );
         
         assert( sit != sorted_names.end() );
         
@@ -57,7 +57,7 @@ public:
     trace_tree( lnode *t ) : tree_(t) {}
     
     virtual trace_type get_type() {
-        return trace_type::tree;
+        return tree;
     }
     
     lnode *get_tree() {
@@ -76,7 +76,7 @@ public:
     }
     
     virtual trace_type get_type() {
-        return trace_type::subtree;
+        return subtree;
     }
     
     const std::vector<std::string> &get_tip_list() {
@@ -95,7 +95,7 @@ public:
     }
     
     virtual trace_type get_type() {
-        return trace_type::insertion;
+        return insertion;
     }
     
     const std::vector<std::string> &get_split() {
@@ -342,7 +342,7 @@ int main( int argc, char *argv[] ) {
             }
         }
         std::vector<std::string> sorted_names;
-        for( auto it = sorted_tips.begin(); it != sorted_tips.end(); ++it ) {
+        for( std::vector< ivy_mike::tree_parser_ms::lnode* >::const_iterator it = sorted_tips.begin(); it != sorted_tips.end(); ++it ) {
             sorted_names.push_back((*it)->m_data->tipName);
         }
         
